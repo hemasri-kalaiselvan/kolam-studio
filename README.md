@@ -2,7 +2,7 @@
 
 > A small web app that draws kolam patterns on a grid of dots (pulli). 
  
-**Tech:** html, JavaScript, CSS
+**Tech:** HTML, JavaScript, CSS
 **Tools:** GitHub
 **AI Tools:** Claude
 

@@ -46,6 +46,7 @@
     box-shadow: inset 0 0 60px rgba(0,0,0,0.35), 0 8px 30px rgba(0,0,0,0.4);
     border: 1px solid var(--border);
   }
+  .canvas-wrap.flat { box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
   .canvas-wrap svg { width: 100%; height: auto; display: block; overflow: visible; }
   .panel {
     flex: 0 1 280px; background: var(--bg-panel); border: 1px solid var(--border);
@@ -92,6 +93,7 @@
   <h1>Kolam Generator</h1>
   <div class="tabs">
     <button class="tab active" data-mode="sikku">Sikku Kolam</button>
+    <button class="tab" data-mode="padi">Padi Kolam</button>
     <button class="tab" data-mode="hridaya">Hridaya Kolam</button>
   </div>
 </header>
@@ -117,6 +119,23 @@
         <input type="range" id="sizeInput" min="3" max="17" step="1" value="8">
       </div>
       <div class="btn-row"><button class="action primary" id="newPattern">New pattern</button></div>
+    </div>
+
+    <!-- Padi controls -->
+    <div class="mode-block" id="mode-padi">
+      <div class="field">
+        <label>Style</label>
+        <select id="padiStyle">
+          <option value="any">Surprise me</option>
+          <option value="frame">Frame &amp; loops</option>
+          <option value="pinwheel">Pinwheel</option>
+          <option value="lotus">Lotus corners</option>
+          <option value="triangle">Triangle arms</option>
+          <option value="rosette">Interlaced rosette</option>
+          <option value="star">Lattice star</option>
+        </select>
+      </div>
+      <div class="btn-row"><button class="action primary" id="newPadi">New pattern</button></div>
     </div>
 
     <!-- Hridaya controls -->
@@ -154,7 +173,8 @@
 const SW = 7; // fixed line weight
 const THEME_EARTH = { floor: '#6b2b23', line: '#f4e9d8', dot: '#e8c78f' };   // Sikku
 const THEME_PEACOCK = { floor: '#132623', line: '#2fb3a0', dot: '#e8d27a' }; // Hridaya
-const CONTROLS_FOR = { sikku: 'grid', hridaya: 'hridaya' };
+const THEME_BLUE = { floor: '#1747a8', line: '#f4f8ff', dot: '#f4f8ff' };     // Padi
+const CONTROLS_FOR = { sikku: 'grid', padi: 'padi', hridaya: 'hridaya' };
 const DOT_R = Math.max(2, SW * 0.4);
 const KEYFRAMES = '<style>@keyframes draw { to { stroke-dashoffset: 0; } }</style>';
 
@@ -286,6 +306,182 @@ function renderSikku() {
   wrap.innerHTML = `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}${paths.join('')}${dots.join('')}</svg>`;
 }
 
+/* ---------- Padi Kolam ---------- */
+// Stencil-style kolam: multi-strand bands that cross into small lattice
+// cells, concentric loops, lotus buds, scroll curls, a centre motif.
+// Built from a few random parts, repeated with 4-fold
+// rotation, from a seed so the animation toggle redraws the same pattern.
+const padiStyle = document.getElementById('padiStyle');
+let padiSeed = (Math.random() * 4294967296) >>> 0;
+const PI = Math.PI;
+const rot = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c]; };
+const rotL = (l, a, o = [0, 0]) => l.map(p => { const q = rot(p, a); return [q[0] + o[0], q[1] + o[1]]; });
+const circ = (r, cx = 0, cy = 0) => Array.from({ length: 49 }, (_, i) => [cx + r * Math.cos(i / 48 * 2 * PI), cy + r * Math.sin(i / 48 * 2 * PI)]);
+const quad = (a, c, b, t0, t1, n = 40) => Array.from({ length: n + 1 }, (_, i) => {
+  const t = t0 + (t1 - t0) * i / n, u = 1 - t;
+  return [u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]];
+});
+const cub = (a, b, c, d, n = 16) => Array.from({ length: n + 1 }, (_, i) => {
+  const t = i / n, u = 1 - t;
+  return [0, 1].map(j => u * u * u * a[j] + 3 * u * u * t * b[j] + 3 * u * t * t * c[j] + t * t * t * d[j]);
+});
+function strands(pts, k, s) {
+  const n = pts.length;
+  const nr = pts.map((p, i) => {
+    const a = pts[Math.max(i - 1, 0)], b = pts[Math.min(i + 1, n - 1)];
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    return [-dy / l, dx / l];
+  });
+  return Array.from({ length: k }, (_, j) => {
+    const o = (j - (k - 1) / 2) * s;
+    return pts.map((p, i) => [p[0] + nr[i][0] * o, p[1] + nr[i][1] * o]);
+  });
+}
+// turtle: walk with heading h; each segment is [length, curvature start, curvature end]
+function turtle(p, h, segs) {
+  const pts = [p];
+  for (const [len, k0, k1] of segs) {
+    const n = Math.ceil(len / 1.2), ds = len / n;
+    for (let i = 0; i < n; i++) {
+      h += (k0 + (k1 - k0) * (i + 0.5) / n) * ds;
+      p = [p[0] + Math.cos(h) * ds, p[1] + Math.sin(h) * ds];
+      pts.push(p);
+    }
+  }
+  return pts;
+}
+const curl = (p, h, d, sc) => turtle(p, h, [[10 * sc, 0, d * 0.1 / sc], [22 * sc, d * 0.1 / sc, d * 0.42 / sc]]);
+// teardrop pointing +x from the origin, n nested copies sharing the tip
+function petal(L, w, n) {
+  const up = cub([0, 0], [L * 0.15, -w * 1.7], [L * 0.6, -w * 1.3], [L, 0]);
+  const sh = up.concat(up.map(p => [p[0], -p[1]]).reverse().slice(1));
+  return Array.from({ length: n }, (_, i) => { const f = 1 - i * 0.3; return sh.map(p => [L + (p[0] - L) * f, p[1] * f]); });
+}
+
+const tfL = (L, q, flip, n = 4) => ({ ...L, S: L.S.map(l => l.map(p => rot(flip ? [-p[0], p[1]] : p, q * 2 * PI / n))) });
+const midLine = S => S[0].map((_, i) => [S.reduce((a, l) => a + l[i][0], 0) / S.length, S.reduce((a, l) => a + l[i][1], 0) / S.length]);
+
+// A "layer" is a set of strands. w > 0 adds a floor-coloured halo behind it so
+// it passes OVER what is beneath (woven look); fill makes a petal opaque.
+function buildPadi(seed, style) {
+  let sd = seed;
+  const R = () => { sd = (sd + 0x6D2B79F5) | 0; let t = Math.imul(sd ^ (sd >>> 15), 1 | sd); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const rr = (a, b) => a + R() * (b - a), ri = (a, b) => Math.floor(rr(a, b + 1)), pick = a => a[Math.floor(R() * a.length)];
+  const fam = style === 'any' ? pick(['frame', 'pinwheel', 'lotus', 'triangle', 'rosette', 'star']) : style;
+  const P = [], D = [];
+  const band = (S, s, fix = 0.3) => ({ S, w: (S.length - 1) * s + 2.4, fix });
+  const line = l => ({ S: [l], w: 0 });
+  const bud = S => ({ S, w: 0, fill: 1 });
+  // 4-fold repeat. The last copy would sit over the first at their shared corner, so the
+  // start of the first band is drawn again on top: that makes the weave alternate all round.
+  const spin = (items, flip, n = 4) => {
+    for (let q = 0; q < n; q++) for (const it of items) P.push(tfL(it, q, flip, n));
+    for (const it of items) if (it.fix) { const t = tfL(it, 0, flip, n); P.push({ ...t, fix: 0, S: t.S.map(l => l.slice(0, Math.round(l.length * it.fix))) }); }
+  };
+  let A = fam === 'lotus' ? rr(30, 36) : rr(27, 36), s = rr(2.4, 3.1);
+  const cp = [A * 0.95, A * 0.95];
+
+  if (fam === 'frame') {
+    const k = ri(2, 4), bul = pick([1, -1]) * rr(4, 12), ov = rr(0.08, 0.2);
+    spin([band(strands(quad([-A, -A], [0, -A + 2 * bul], [A, -A], -ov, 1 + ov), k, s), s)]);
+    let lobeR = 0;
+    if (R() < 0.85) {
+      const m = ri(3, 5), r = A / 2 * rr(0.92, 1.05), e = rr(0.85, 1.4), cy = -A + bul * 0.75, st = r / (m + 0.6);
+      lobeR = r * e;
+      const rings = [];
+      for (const cx of [-A / 2, A / 2]) for (let i = 0; i < m; i++) {
+        const rad = r - i * st;
+        rings.push(Array.from({ length: 33 }, (_, j) => { const a = PI - 0.08 + (PI + 0.16) * j / 32; return [cx + rad * Math.cos(a), cy + rad * e * Math.sin(a)]; }));
+      }
+      spin([{ S: rings.slice(0, m), w: (m - 1) * st + 2.4 }, { S: rings.slice(m), w: (m - 1) * st + 2.4 }]);
+      const eo = pick(['petal', 'none']), y = -A - lobeR * 0.6;
+      if (eo === 'curls') spin([line(curl([0, y], -PI / 2 - 0.5, -1, 1.1)), line(curl([0, y], -PI / 2 + 0.5, 1, 1.1))]);
+      if (eo === 'diamond') spin([1, 0.6].map(f => line([[0, -8 * f], [6 * f, 0], [0, 8 * f], [-6 * f, 0], [0, -8 * f]].map(p => [p[0], p[1] + y]))));
+      if (eo === 'petal') spin([bud(petal(lobeR * 0.8, 5.5, 2).map(l => rotL(l, -PI / 2, [0, -A])))]);
+    }
+    const co = pick(['bud', 'fan', 'curl']);
+    if (co === 'bud') spin([bud(petal(rr(22, 30), rr(6, 9), 2).map(l => rotL(l, PI / 4, cp)))]);
+    if (co === 'fan') { const w = rr(0.55, 0.7); spin([-1, 0, 1].map(j => bud(petal(rr(20, 26), 5.5, 2).map(l => rotL(l, PI / 4 + j * w, cp))))); }
+    if (co === 'curl') spin([line(curl(cp, PI / 4 - 0.7, 1, 1.5)), line(curl(cp, PI / 4 + 0.7, -1, 1.5))]);
+  } else if (fam === 'pinwheel') {
+    const k = ri(2, 3), bul = pick([1, -1]) * rr(3, 10), flip = R() < 0.5, ss = Math.min(s, 3);
+    const side = quad([-A, -A], [0, -A + 2 * bul], [A, -A], 0, 1, 40);
+    const a = side[side.length - 2], b = side[side.length - 1], h = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const kk = rr(0.03, 0.06), ke = rr(0.18, 0.24);
+    const hook = turtle(b, h, [[rr(18, 36), 0, -kk], [rr(50, 66), -kk, -ke]]);
+    spin([band(strands(side.concat(hook.slice(1)), k, ss), ss, 0.2)], flip);
+  } else if (fam === 'lotus') {
+    const k = ri(3, 4), ov = rr(0.25, 0.4), Dd = A * rr(0.95, 1.1), w = rr(0.5, 0.62);
+    spin([band(strands(quad([-A, -A], [0, -A + rr(-6, 6)], [A, -A], -ov, 1 + ov), k, s), s)]);
+    spin([band(strands(quad([0, -Dd], [Dd * 0.3, -Dd * 0.3], [Dd, 0], 0, 1), ri(2, 3), s), s, 0)]);
+    spin([-1, 0, 1].map(j => bud(petal(rr(22, 28), 5, 2).map(l => rotL(l, PI / 4 + j * w, [A * 0.9, A * 0.9])))));
+    spin([-1, 0, 1].map(j => bud(petal(rr(15, 20), 3.2, 2).map(l => rotL(l, -PI / 2 + j * 0.6, [0, -A * 0.72])))));
+  } else if (fam === 'rosette') {           // N interlaced loops, each woven over/under its neighbours
+    const N = pick([4, 5, 6, 6, 8]), th = 2 * PI / N, k = ri(2, 3), ss = rr(2.4, 3), Rr = 62, r0 = Rr * rr(0.16, 0.3);
+    const pm = th / 2 * rr(1.25, 1.6), M = 44, h = M / 2;
+    A = r0 * 1.7;
+    // one loop = two edges (+/- angle) that pinch together at both ends; sin^0.7 rounds the ends
+    const edge = sg => Array.from({ length: M + 1 }, (_, i) => { const v = i / M, r = r0 + (Rr - r0) * v, f = sg * pm * Math.pow(Math.sin(PI * v), 0.7); return [r * Math.cos(f), r * Math.sin(f)]; });
+    const Re = edge(1), Le = edge(-1), pc = pts => band(strands(pts, k, ss), ss, 0);
+    // neighbours cross twice: at the outer crossing the next loop goes over, at the inner one it goes under
+    spin([pc(Re.slice(h)), pc(Le.slice(0, h + 1))], false, N);
+    spin([pc(Re.slice(0, h + 1)), pc(Le.slice(h))], false, N);
+    const to = pick(['bud', 'dots', 'none']);
+    if (to === 'bud') spin([bud(petal(Rr * 0.3, 5, 2).map(l => rotL(l, 0, [Rr * 1.02, 0])))], false, N);
+    if (to === 'dots') for (let q = 0; q < N; q++) for (const rd of [0.97, 1.07, 1.17]) { const a = (q + 0.5) * th; D.push([Rr * rd * Math.cos(a), Rr * rd * Math.sin(a), 1.2]); }
+  } else if (fam === 'star') {              // N-sided frame of straight bands (lattice corners) with lattice petals
+    const N = pick([4, 6, 6, 8]), th = 2 * PI / N, a = rr(28, 34), h = a * Math.tan(th / 2), k = ri(2, 3), ov = rr(0.1, 0.22);
+    A = a;
+    spin([band(strands(quad([-h, -a], [0, -a], [h, -a], -ov, 1 + ov), k, s), s)], false, N);
+    if (R() < 0.6) {                        // a smaller frame turned half a step: makes a star
+      const b2 = band(strands(quad([-h * 0.6, -a * 0.6], [0, -a * 0.6], [h * 0.6, -a * 0.6], -ov, 1 + ov), 2, s), s, 0);
+      b2.S = b2.S.map(l => rotL(l, th / 2)); spin([b2], false, N);
+    }
+    const Lp = a * rr(0.75, 1), sh = petal(Lp, Lp * 0.2, 1)[0];
+    const lat = petal(Lp, Lp * 0.2, 3).concat([4, 7, 10, 13].map(i => [sh[i], sh[sh.length - 1 - i]]));   // nested outlines + cross rungs = net
+    const vert = R() < 0.5, ang = vert ? -PI / 2 + th / 2 : -PI / 2, rad = vert ? a / Math.cos(th / 2) * 0.9 : a * 0.95;
+    spin([bud(lat.map(l => rotL(l, ang, [rad * Math.cos(ang), rad * Math.sin(ang)])))], false, N);
+  } else {                                   // triangle arms: stacked triangles, apex toward the centre
+    const k = ri(2, 3), bul = rr(3, 9), b = rr(8, 11), g = rr(3.4, 4.4), n = ri(2, 3), yb = -(A + rr(12, 16));
+    spin([band(strands(quad([-A, -A], [0, -A + 2 * bul], [A, -A], -0.05, 1.05), k, s), s)]);
+    spin(Array.from({ length: n }, (_, i) => { const y0 = yb + i * g; return line([[-b, y0], [b, y0], [0, y0 + b * 2.2], [-b, y0]]); }));
+    spin([bud(petal(rr(22, 28), 8, 3).map(l => rotL(l, PI / 4, cp)))]);
+  }
+
+  const Rc = A * rr(0.36, 0.46), c = pick(['star', 'rings', 'flower', 'lotus', 'spiral']);
+  if (c === 'star') {
+    const sq = (r, a) => [0, 1, 2, 3, 4].map(i => rot([r, 0], a + i * PI / 2));
+    [sq(Rc, PI / 4), sq(Rc, 0), sq(Rc * 0.6, PI / 4), sq(Rc * 0.6, 0)].forEach(l => P.push(line(l)));
+  } else if (c === 'rings') {
+    for (let i = 0; i < ri(2, 3); i++) P.push(line(circ(Rc * (1 - i * 0.3))));
+    D.push([0, 0, 1.8]);
+  } else if (c === 'flower' || c === 'lotus') {
+    const n = c === 'flower' ? 4 : 8;
+    for (let q = 0; q < n; q++) P.push(bud(petal(Rc, Rc * 0.32, 2).map(l => rotL(l, q * 2 * PI / n))));
+    if (c === 'flower') P.push(line(circ(Rc * 0.12)));
+  } else {
+    for (let arm = 0; arm < 2; arm++) P.push(line(Array.from({ length: 90 }, (_, i) => { const t = i / 89, a = t * 5 * PI + arm * PI; return rot([Rc * t, 0], a); })));
+  }
+  return { P, D };
+}
+
+function renderPadi() {
+  const { P, D } = buildPadi(padiSeed, padiStyle.value);
+  const fl = THEME_BLUE.floor, ln = THEME_BLUE.line;
+  wrap.style.setProperty('--floor', fl);
+  let mx = 1;
+  for (const L of P) for (const l of L.S) for (const p of l) mx = Math.max(mx, Math.abs(p[0]), Math.abs(p[1]));
+  const sc = 88 / mx, sw = (1.4 / sc).toFixed(3);   // scale every pattern to fill the board
+  const pd = l => 'M' + l.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join('L');
+  const out = P.map(L =>
+    (L.w ? `<path data-halo="1" d="${pd(midLine(L.S))}" fill="none" stroke="${fl}" stroke-width="${L.w}"/>` : '') +
+    (L.fill ? `<path data-halo="1" d="${pd(L.S[0])}Z" fill="${fl}" stroke="none"/>` : '') +
+    L.S.map(l => `<path class="kolam-line" d="${pd(l)}" stroke="${ln}" stroke-width="${sw}" ${animAttrs()}/>`).join('')
+  ).join('');
+  const dots = D.map(d => `<circle cx="${d[0]}" cy="${d[1]}" r="${d[2]}" fill="${THEME_BLUE.dot}"/>`).join('');
+  wrap.innerHTML = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}<g transform="translate(100 100) scale(${sc.toFixed(4)})">${out}${dots}</g></svg>`;
+}
+
 /* ---------- Hridaya ---------- */
 const mInput = document.getElementById('mInput');
 const mVal = document.getElementById('mVal');
@@ -372,6 +568,7 @@ function renderHridaya() {
 /* ---------- Menu & wiring ---------- */
 const CREDITS = {
   sikku: 'Inspired by <a href="https://github.com/Crazzygamerr/zen-kolam" target="_blank" rel="noopener">zen-kolam</a>',
+  padi: 'Padi kolam: stencil-style patterns of woven bands, loops and lotus buds',
   hridaya: 'Algorithm: Chakraborty &amp; Manna, <a href="https://arxiv.org/abs/2507.02874" target="_blank" rel="noopener">arXiv:2507.02874</a>'
 };
 function updateCredit() {
@@ -380,7 +577,9 @@ function updateCredit() {
 
 function render() {
   updateCredit();
+  wrap.classList.toggle('flat', mode === 'padi');
   if (mode === 'sikku') renderSikku();
+  else if (mode === 'padi') renderPadi();
   else renderHridaya();
 }
 
@@ -400,6 +599,11 @@ document.getElementById('newPattern').addEventListener('click', () => {
   bitsKey = null;
   render();
 });
+document.getElementById('newPadi').addEventListener('click', () => {
+  padiSeed = (Math.random() * 4294967296) >>> 0;
+  render();
+});
+padiStyle.addEventListener('change', render);
 mInput.addEventListener('input', render);
 nSelect.addEventListener('change', render);
 hridayaStyle.addEventListener('change', render);
@@ -413,6 +617,7 @@ function buildExportSvg() {
   const clone = svgEl.cloneNode(true);
   clone.querySelectorAll('style').forEach(s => s.remove());
   clone.querySelectorAll('path').forEach(p => {
+    if (p.dataset.halo) return;   // keep padi halos/fills exactly as drawn
     ['pathLength', 'stroke-dasharray', 'stroke-dashoffset', 'style', 'class'].forEach(a => p.removeAttribute(a));
     p.setAttribute('fill', 'none');
     p.setAttribute('stroke-linecap', 'round');

@@ -123,7 +123,7 @@
     <div class="mode-block" id="mode-hridaya">
       <div class="field">
         <label>Dots per arm (m) <b id="mVal">7</b></label>
-        <input type="range" id="mInput" min="3" max="14" step="1" value="7">
+        <input type="range" id="mInput" min="2" max="14" step="1" value="7">
       </div>
       <div class="field">
         <label>Arms (n, coprime to m)</label>
@@ -144,11 +144,11 @@
       <span>Draw-on animation</span>
       <input type="checkbox" id="animate" checked>
     </div>
-    <div class="btn-row"><button class="action" id="downloadBtn">Download SVG</button></div>
+    <div class="btn-row"><button class="action" id="downloadBtn">Download image</button></div>
   </div>
 </main>
 
-<footer>Inspired by <a href="https://github.com/Crazzygamerr/zen-kolam" target="_blank" rel="noopener">zen-kolam</a></footer>
+<footer id="creditFooter"></footer>
 
 <script>
 const SW = 7; // fixed line weight
@@ -370,7 +370,16 @@ function renderHridaya() {
 }
 
 /* ---------- Menu & wiring ---------- */
+const CREDITS = {
+  sikku: 'Inspired by <a href="https://github.com/Crazzygamerr/zen-kolam" target="_blank" rel="noopener">zen-kolam</a>',
+  hridaya: 'Algorithm: Chakraborty &amp; Manna, <a href="https://arxiv.org/abs/2507.02874" target="_blank" rel="noopener">arXiv:2507.02874</a>'
+};
+function updateCredit() {
+  document.getElementById('creditFooter').innerHTML = CREDITS[mode];
+}
+
 function render() {
+  updateCredit();
   if (mode === 'sikku') renderSikku();
   else renderHridaya();
 }
@@ -396,17 +405,54 @@ nSelect.addEventListener('change', render);
 hridayaStyle.addEventListener('change', render);
 animateChk.addEventListener('input', render);
 
-document.getElementById('downloadBtn').addEventListener('click', () => {
+// Build a self-contained copy of the drawing for saving: inline styles,
+// no animation state, and a background so it looks right in any viewer.
+function buildExportSvg() {
   const svgEl = wrap.querySelector('svg');
-  if (!svgEl) return;
+  if (!svgEl) return null;
   const clone = svgEl.cloneNode(true);
+  clone.querySelectorAll('style').forEach(s => s.remove());
+  clone.querySelectorAll('path').forEach(p => {
+    ['pathLength', 'stroke-dasharray', 'stroke-dashoffset', 'style', 'class'].forEach(a => p.removeAttribute(a));
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+  });
+  const vb = svgEl.getAttribute('viewBox').split(' ').map(Number);
+  const m = 24; // margin around the drawing
+  const x = vb[0] - m, y = vb[1] - m, w = vb[2] + 2 * m, h = vb[3] + 2 * m;
+  clone.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = (mode === 'sikku' ? 'sikku-' + layoutSelect.value : mode) + '-kolam.svg';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
+  clone.setAttribute('width', w);
+  clone.setAttribute('height', h);
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', x); bg.setAttribute('y', y);
+  bg.setAttribute('width', w); bg.setAttribute('height', h);
+  bg.setAttribute('fill', wrap.style.getPropertyValue('--floor'));
+  clone.insertBefore(bg, clone.firstChild);
+  return { svg: new XMLSerializer().serializeToString(clone), w, h };
+}
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const out = buildExportSvg();
+  if (!out) return;
+  const name = (mode === 'sikku' ? 'sikku-' + layoutSelect.value : mode) + '-kolam.png';
+  const img = new Image();
+  img.onload = () => {
+    const scale = 1600 / out.w;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(out.w * scale);
+    canvas.height = Math.round(out.h * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(out.svg);
 });
 
 populateNOptions();

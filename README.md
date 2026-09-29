@@ -1,15 +1,7 @@
 # Kolam Generator
 
-> A small web app that draws kolam patterns on a grid of dots (pulli). 
- 
-**Tech:** HTML, JavaScript, CSS
-**Tools:** GitHub
-**AI Tools:** Claude
-
-## About
-
 A small web app that draws kolam patterns on a grid of dots (pulli). Open `index.html` in any browser — no build step, no dependencies.
- 
+
 ## Modes
 
 ### Sikku Kolam (default)

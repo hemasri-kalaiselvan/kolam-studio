@@ -1,6 +1,6 @@
 # Kolam Studio
 
-> A web app that draws traditional South Indian kolam patterns on a grid of dots (pulli), in Sikku, Padi, and Hridaya styles.
+> A web app that draws traditional South Indian kolam patterns on a grid of dots (pulli), in Sikku, Padi, Shape, and Hridaya styles.
 
 **Tech:** HTML, CSS, JavaScript
 **Tools:** GitHub
@@ -9,7 +9,7 @@
 ## About
 
 - A small web app that draws kolam patterns on a grid of dots (pulli). Open `index.html` in any browser — no build step, no dependencies.
-- Three modes: **Sikku Kolam** (interlacing loops), **Padi Kolam** (stencil-style bands and lotus motifs), and **Hridaya Kolam** (a radial, single-stroke kolam).
+- Four modes: **Sikku Kolam** (interlacing loops), **Padi Kolam** (stencil-style bands and lotus motifs), **Shape Kolam** (line and leaf patterns drawn over a visible dot layout), and **Hridaya Kolam** (a radial, single-stroke kolam).
 - A draw-on animation, multiple dot layouts and styles per mode, and a one-click download of the finished pattern as an image.
 
 ### Sikku Kolam (default)
@@ -36,6 +36,14 @@
   - **Lattice star** – a 4, 6 or 8-sided frame of straight bands (sometimes a second one turned half a step, which makes a star), with net-like lattice petals.
   - **Centre motif** (all styles) – 8-point star, rings, four-petal flower, lotus or double spiral.
 
+### Shape Kolam
+
+- Pulli kolam: a lattice of dots in a fixed arrangement, with the pattern drawn over it. White lines on black; the dots are small and amber with a thin dark rim, so they stay visible without crowding the lines.
+- **Dot layout**: Diamond (rows of 1, 3, 5 … n … 5, 3, 1), Square, Hexagon (staggered rows) or Star (six-pointed star). **Size** sets how many dots.
+- **Pattern style**: Flowers (leaf-shaped petals and scallops), Stars (star polygons and spokes), Diamonds, or "Surprise me". **New pattern** gives a different one each time.
+- Every line starts and ends exactly on a dot, and every dot is touched or enclosed by the pattern.
+- **Show dots** switches the dots on or off.
+
 ### Hridaya Kolam
 
 - A radial, single-stroke kolam. It follows the published algorithm from Chakraborty & Manna, *Extending Hridaya Kolam to Even-Ordered Dot Patterns* ([arXiv:2507.02874](https://arxiv.org/abs/2507.02874)): a modular-arithmetic sequence (a₀ = m, aₖ = (k·n) mod m) is repeated over n arms and plotted in polar coordinates.
@@ -44,12 +52,13 @@
 ## How AI Helped
 
 - **Claude** — design direction, the pattern-generation code, geometry and debugging, and deployment.
+- Designed the dot-lattice Shape Kolam: dot layouts on square and triangular lattices, and ring-based patterns whose every line starts and ends on a dot.
 - Worked through the weaving problem: making bands and rosette loops pass convincingly over and under each other with a single drawing pass, so every crossing alternates all the way round.
 - Implemented the published Hridaya Kolam algorithm from the referenced paper, including the coprime-arm constraint that keeps the single stroke closed.
 
 ## Credits
 
-- Sikku inspired by [zen-kolam](https://github.com/Crazzygamerr/zen-kolam). The tile idea (each dot in a loop, with tips toward connected sides) was learned from studying that project. No code or data from it is used here; the curves and generator are written from scratch.
+- Sikku inspired by [zen-kolam](https://github.com/Crazzygamerr/zen-kolam). The tile idea (each dot in a loop, with tips toward connected sides) was learned from studying that project. No code or data from it is used here; the curves and the Kolam Studio code are written from scratch.
 - Hridaya Kolam: Chakraborty & Manna, [arXiv:2507.02874](https://arxiv.org/abs/2507.02874).
 
 ---
@@ -69,10 +78,15 @@
   - **Lattice petals.** A net is made from nested petal outlines plus straight rungs across them.
   - **Fitting.** Each finished pattern is measured and scaled to fill the board, with the line weight adjusted to stay constant.
   - **Download.** The image keeps the halos and fills, so the weave is preserved.
+  - **Shape Kolam dot layouts.** `dotLattice` makes the dot set for each layout. Square and Diamond use integer points. Hexagon and Star use a triangular lattice (x = q + r/2, y = r·√3/2); the Star keeps the points inside either of two overlapping triangles.
+  - **Shape Kolam patterns.** The pattern is made from rings of dots round a centre dot: 8 dots on the square lattice, 6 on the triangular one. On a ring of radius k, an element is one of: a polygon through neighbouring ring dots, a polygon skipping one dot (a diamond, or the two triangles of a hexagram), a star polygon, spokes from the centre dot, leaf-shaped petals from the centre dot to each ring dot, or scallops (arcs bulging outward between neighbouring ring dots). Up to three rings (k from 1 to 5) round the centre each get a random element; long star and spoke lines are used only on the two smallest rings, so the drawing stays open.
+  - **Shape Kolam filling.** Every dot still untouched, nearest the centre first, gets a small ring element of one chosen type, repeated at its rotated positions, so the whole layout is covered evenly. Dots on the edge have no complete ring, so each gets a leaf pointing to its neighbour nearest the centre, which makes a petal fringe. An element is skipped if any of its dots is missing from the layout, and the finished drawing is scaled to fill the board.
 - **How many variations.** For Sikku (square layout), the number of patterns at size N is 2 raised to the number of independent edge bits: about 4.3 billion at size 8, about 4.7 × 10²¹ at size 12, and about 3.4 × 10³⁸ at size 16. Hridaya has 94 valid (m, n) combinations × 3 connection styles.
 - **Known limits (Padi).** The patterns imitate the look of traditional padi kolam but are not copies of traditional designs. Not yet included: the conch (shankh) centre, dotted grid cells, and one-line petal drawings with veins.
+- **Known limits (Shape).** Birds, animals and lotus shapes are not included. They need to be designed dot by dot for each layout.
 - **Planned.**
   - Kambi Kolam (straight-stroke style) — an earlier attempt was removed because it was not correct.
   - More dot layouts.
   - Padi Kolam: veined lotus petals, scroll-and-flower pinwheels and the conch centre.
+  - Shape Kolam: birds, animals and lotus designed dot by dot.
 - **Licence.** Not chosen yet — add a `LICENSE` file before sharing widely.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Kolam Generator</title>
+<title>Kolam Studio</title>
 <!-- Favicons -->
 <link rel="icon" href="favicons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="favicons/favicon-32.png">
@@ -96,10 +96,11 @@
 </head>
 <body>
 <header>
-  <h1>Kolam Generator</h1>
+  <h1>Kolam Studio</h1>
   <div class="tabs">
     <button class="tab active" data-mode="sikku">Sikku Kolam</button>
     <button class="tab" data-mode="padi">Padi Kolam</button>
+    <button class="tab" data-mode="shape">Shape Kolam</button>
     <button class="tab" data-mode="hridaya">Hridaya Kolam</button>
   </div>
 </header>
@@ -144,6 +145,34 @@
       <div class="btn-row"><button class="action primary" id="newPadi">New pattern</button></div>
     </div>
 
+    <!-- Shape controls -->
+    <div class="mode-block" id="mode-shape">
+      <div class="field">
+        <label>Dot layout</label>
+        <select id="shapeLayout">
+          <option value="diamond">Diamond</option>
+          <option value="hexagon">Hexagon</option>
+          <option value="star">Star</option>
+          <option value="square">Square</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Size <b id="shapeSizeVal">6</b></label>
+        <input type="range" id="shapeSize" min="4" max="8" step="1" value="6">
+      </div>
+      <div class="field">
+        <label>Pattern style</label>
+        <select id="shapeSel">
+          <option value="any">Surprise me</option>
+          <option value="flower">Flowers (petals, scallops)</option>
+          <option value="star">Stars (points, spokes)</option>
+          <option value="diamond">Diamonds</option>
+        </select>
+      </div>
+      <div class="toggle-row"><span>Show dots</span><input type="checkbox" id="showDots" checked></div>
+      <div class="btn-row"><button class="action primary" id="newShape">New pattern</button></div>
+    </div>
+
     <!-- Hridaya controls -->
     <div class="mode-block" id="mode-hridaya">
       <div class="field">
@@ -180,7 +209,8 @@ const SW = 7; // fixed line weight
 const THEME_EARTH = { floor: '#6b2b23', line: '#f4e9d8', dot: '#e8c78f' };   // Sikku
 const THEME_PEACOCK = { floor: '#132623', line: '#2fb3a0', dot: '#e8d27a' }; // Hridaya
 const THEME_BLUE = { floor: '#1747a8', line: '#f4f8ff', dot: '#f4f8ff' };     // Padi
-const CONTROLS_FOR = { sikku: 'grid', padi: 'padi', hridaya: 'hridaya' };
+const THEME_SHAPE = { floor: '#0c0c12', line: '#f5f5f5', dot: '#ffb703' };    // Shape
+const CONTROLS_FOR = { sikku: 'grid', padi: 'padi', shape: 'shape', hridaya: 'hridaya' };
 const DOT_R = Math.max(2, SW * 0.4);
 const KEYFRAMES = '<style>@keyframes draw { to { stroke-dashoffset: 0; } }</style>';
 
@@ -488,6 +518,103 @@ function renderPadi() {
   wrap.innerHTML = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}<g transform="translate(100 100) scale(${sc.toFixed(4)})">${out}${dots}</g></svg>`;
 }
 
+/* ---------- Shape Kolam ---------- */
+// Pulli kolam: a lattice of dots (diamond, square, hexagon or star) with line and
+// leaf patterns whose ends all sit exactly on dots.
+const shapeSel = document.getElementById('shapeSel');
+const showDots = document.getElementById('showDots');
+const shapeLayout = document.getElementById('shapeLayout');
+const shapeSize = document.getElementById('shapeSize');
+const shapeSizeVal = document.getElementById('shapeSizeVal');
+let shapeSeed = (Math.random() * 4294967296) >>> 0;
+// Dot layouts (pulli). Spacing is 1. Diamond/square use a square lattice, hexagon/star a triangular one.
+function dotLattice(kind, s) {
+  const pts = [];
+  if (kind === 'diamond' || kind === 'square') {
+    const n = kind === 'diamond' ? s : Math.round(s * 0.75);
+    for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) if (kind === 'square' || Math.abs(i) + Math.abs(j) <= n) pts.push([i, j]);
+    return { pts, N: 4, anchors: [0, 1, 2, 3].map(k => [3 * Math.round(Math.cos(k * PI / 2)), 3 * Math.round(Math.sin(k * PI / 2))]) };
+  }
+  const H = Math.sqrt(3) / 2, m = Math.max(2, Math.floor(s / 2)), Rs = m * Math.sqrt(3);
+  const dg = a => [Math.cos(a * PI / 180), Math.sin(a * PI / 180)];
+  const inTri = (p, ns) => ns.every(a => p[0] * dg(a)[0] + p[1] * dg(a)[1] <= Rs / 2 + 1e-6);
+  for (let q = -3 * s; q <= 3 * s; q++) for (let r = -3 * s; r <= 3 * s; r++) {
+    const p = [q + r / 2, r * H];
+    const ok = kind === 'hexagon' ? Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= s - 1
+      : inTri(p, [-90, 30, 150]) || inTri(p, [90, 210, 330]);
+    if (ok) pts.push(p);
+  }
+  const anchors = [0, 1, 2, 3, 4, 5].map(k => kind === 'star' ? dg(90 + 60 * k).map(v => v * Rs) : dg(60 * k).map(v => v * 3));
+  return { pts, N: 6, anchors };
+}
+
+function buildShape(seed, sel, layout, size) {
+  let sd = seed;
+  const R = () => { sd = (sd + 0x6D2B79F5) | 0; let t = Math.imul(sd ^ (sd >>> 15), 1 | sd); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const pick = a => a[Math.floor(R() * a.length)];
+  const { pts, N } = dotLattice(layout, size);
+  const sq = N === 4, L = [], cov = new Set();   // cov = dots already touched or enclosed by a line
+  const key = p => (+p[0].toFixed(2) + 0) + ',' + (+p[1].toFixed(2) + 0), has = new Set(pts.map(key));
+  const dg = j => [Math.cos(j * PI / 3), Math.sin(j * PI / 3)];
+  // the ring of dots at distance k round centre c: 8 points on the square lattice, 6 on the triangular one
+  const ring = (c, k) => (sq ? [[k, 0], [k, k], [0, k], [-k, k], [-k, 0], [-k, -k], [0, -k], [k, -k]] : [0, 1, 2, 3, 4, 5].map(j => dg(j).map(v => v * k))).map(v => [c[0] + v[0], c[1] + v[1]]);
+  const arc = (a, b, off, side) => {
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], d = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(d[0], d[1]) || 1;
+    return quad(a, [m[0] - d[1] / l * off * side, m[1] + d[0] / l * off * side], b, 0, 1, 16);
+  };
+  // every element starts and ends exactly on dots; it is skipped if any of its dots is missing from the layout
+  const elem = (ty, c, k) => {
+    const P = ring(c, k), M = P.length;
+    if (!P.every(p => has.has(key(p)))) return false;
+    cov.add(key(c)); P.forEach(p => cov.add(key(p)));
+    P.forEach((p, i) => {
+      const q = P[(i + 1) % M];
+      if (ty === 'poly1') L.push([p, q]);
+      else if (ty === 'poly2') L.push([p, P[(i + 2) % M]]);
+      else if (ty === 'star') L.push([p, P[(i + (sq ? 3 : 2)) % M]]);
+      else if (ty === 'spokes') L.push([c, p]);
+      else if (ty === 'petals') { const o = 0.44 * Math.hypot(p[0] - c[0], p[1] - c[1]); L.push(arc(c, p, o, 1), arc(c, p, o, -1)); }
+      else if (ty === 'scallop') {
+        const d = Math.hypot(q[0] - p[0], q[1] - p[1]), m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], a1 = arc(p, q, 0.7 * d, 1);
+        L.push(Math.hypot(a1[8][0] - c[0], a1[8][1] - c[1]) > Math.hypot(m[0] - c[0], m[1] - c[1]) ? a1 : arc(p, q, 0.7 * d, -1));   // bulge away from the centre
+      }
+    });
+    return true;
+  };
+  const T = { flower: ['petals', 'scallop'], star: ['star', 'poly2', 'spokes'], diamond: ['poly1', 'poly2'] }[sel] || ['petals', 'scallop', 'poly1', 'poly2', 'star', 'spokes'];
+  // at most 3 rings round the centre dot; long star/spoke lines only on the two small rings, so the drawing stays open
+  const big = T.filter(t => t !== 'star' && t !== 'spokes'), ks = [1, 2, 3, 4, 5].filter(k => k === 1 || R() < 0.5).slice(0, 3);
+  ks.forEach(k => elem(pick(k <= 2 ? T : (big.length ? big : ['poly2'])), [0, 0], k));
+  // cover the rest: every dot not yet touched, nearest the centre first, gets a small ring pattern (and its rotated copies), so the layout is filled evenly
+  const tile = pick(T.filter(t => t !== 'spokes')), ang = p => Math.atan2(p[1], p[0]);
+  const sorted = pts.slice().sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]) || ang(a) - ang(b));
+  for (const p of sorted) if (!cov.has(key(p))) for (let j = 0; j < N; j++) elem(tile, rot(p, j * 2 * PI / N), 1);
+  // dots on the edge have no complete ring: give each a leaf pointing to its neighbour nearest the centre (a petal fringe)
+  const rest = sorted.filter(p => !cov.has(key(p)));
+  for (const p of rest) {
+    const nb = pts.filter(q => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); return d > 0.01 && d < 1.01; });
+    if (!nb.length) continue;
+    const dm = Math.min(...nb.map(q => Math.hypot(q[0], q[1])));
+    nb.filter(q => Math.hypot(q[0], q[1]) < dm + 1e-6).forEach(q => { const o = 0.44 * Math.hypot(q[0] - p[0], q[1] - p[1]); L.push(arc(p, q, o, 1), arc(p, q, o, -1)); });
+  }
+  return { L, D: pts };
+}
+
+function renderShape() {
+  const { L, D } = buildShape(shapeSeed, shapeSel.value, shapeLayout.value, parseInt(shapeSize.value, 10));
+  shapeSizeVal.textContent = shapeSize.value;
+  wrap.style.setProperty('--floor', THEME_SHAPE.floor);
+  let mx = 1;
+  for (const l of L) for (const p of l) mx = Math.max(mx, Math.abs(p[0]), Math.abs(p[1]));
+  for (const p of D) mx = Math.max(mx, Math.abs(p[0]), Math.abs(p[1]));
+  const sc = 88 / mx, sw = (1.0 / sc).toFixed(3), dr = (1.0 / sc).toFixed(3), ring = (0.35 / sc).toFixed(3);
+  const pd = l => 'M' + l.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join('L');
+  const lines = L.map(l => `<path class="kolam-line" d="${pd(l)}" stroke="${THEME_SHAPE.line}" stroke-width="${sw}" ${animAttrs()}/>`).join('');
+  // dots are a different colour, with a dark rim so they stay visible on top of the lines
+  const dots = showDots.checked ? D.map(p => `<circle cx="${p[0].toFixed(2)}" cy="${p[1].toFixed(2)}" r="${dr}" fill="${THEME_SHAPE.dot}" stroke="${THEME_SHAPE.floor}" stroke-width="${ring}"/>`).join('') : '';
+  wrap.innerHTML = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}<g transform="translate(100 100) scale(${sc.toFixed(4)})">${lines}${dots}</g></svg>`;
+}
+
 /* ---------- Hridaya ---------- */
 const mInput = document.getElementById('mInput');
 const mVal = document.getElementById('mVal');
@@ -574,6 +701,7 @@ function renderHridaya() {
 /* ---------- Menu & wiring ---------- */
 const CREDITS = {
   sikku: 'Inspired by <a href="https://github.com/Crazzygamerr/zen-kolam" target="_blank" rel="noopener">zen-kolam</a>',
+  shape: 'Shape kolam: motifs drawn over a lattice of dots, in the style of pulli kolam',
   padi: 'Padi kolam: stencil-style patterns of woven bands, loops and lotus buds',
   hridaya: 'Algorithm: Chakraborty &amp; Manna, <a href="https://arxiv.org/abs/2507.02874" target="_blank" rel="noopener">arXiv:2507.02874</a>'
 };
@@ -586,6 +714,7 @@ function render() {
   wrap.classList.toggle('flat', mode === 'padi');
   if (mode === 'sikku') renderSikku();
   else if (mode === 'padi') renderPadi();
+  else if (mode === 'shape') renderShape();
   else renderHridaya();
 }
 
@@ -610,6 +739,14 @@ document.getElementById('newPadi').addEventListener('click', () => {
   render();
 });
 padiStyle.addEventListener('change', render);
+document.getElementById('newShape').addEventListener('click', () => {
+  shapeSeed = (Math.random() * 4294967296) >>> 0;
+  render();
+});
+shapeSel.addEventListener('change', render);
+shapeLayout.addEventListener('change', render);
+shapeSize.addEventListener('input', render);
+showDots.addEventListener('change', render);
 mInput.addEventListener('input', render);
 nSelect.addEventListener('change', render);
 hridayaStyle.addEventListener('change', render);

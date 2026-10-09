@@ -221,16 +221,14 @@ const THEME_BLUE = { floor: '#1747a8', line: '#f4f8ff', dot: '#f4f8ff' };     //
 const THEME_SHAPE = { floor: '#0c0c12', line: '#f5f5f5', dot: '#ffb703' };    // Shape
 const CONTROLS_FOR = { sikku: 'grid', padi: 'padi', shape: 'shape', hridaya: 'hridaya' };
 const DOT_R = Math.max(2, SW * 0.4);
-const KEYFRAMES = '<style>@keyframes draw{to{stroke-dashoffset:0}}@keyframes pop{from{opacity:0}to{opacity:1}}@keyframes show{to{opacity:1}}.kdot{opacity:0}.khalo{opacity:0}</style>';
+const KEYFRAMES = '';   // animation is driven from script (see sequenceAnimation), not CSS
 
 let mode = 'sikku';
 const wrap = document.getElementById('canvasWrap');
 const animateChk = document.getElementById('animate');
 
-function animAttrs() {
-  return animateChk.checked
-    ? 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation: draw 2.6s ease forwards;"'
-    : '';
+function animAttrs() {   // lines start hidden (dash offset 1); sequenceAnimation draws them one at a time
+  return animateChk.checked ? 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"' : '';
 }
 
 /* ---------- Sikku Kolam ---------- */
@@ -723,36 +721,57 @@ function updateCredit() {
   document.getElementById('creditFooter').innerHTML = CREDITS[mode];
 }
 
-// Tutorial-style animation: the dots appear one at a time (row by row), then every
-// line is drawn in turn, one stroke after another, so a viewer can follow along.
+// Tutorial-style animation, driven by one timer so only one thing happens at a time:
+// the dots appear row by row, then every line is drawn in turn and each stroke is
+// finished before the next one starts.
 const animSpeed = document.getElementById('animSpeed');
 const SPEEDS = {   // dot = seconds per dot, rate = board widths per second, min = shortest stroke, gap = pause between strokes, cap = longest total
   slow:   { dot: 0.15, dotCap: 25, rate: 0.22, min: 0.5,  gap: 0.05, cap: 150 },
   normal: { dot: 0.06, dotCap: 10, rate: 0.5,  min: 0.25, gap: 0.02, cap: 60 },
   fast:   { dot: 0.02, dotCap: 3,  rate: 1.5,  min: 0.08, gap: 0,    cap: 20 }
 };
+let animRaf = 0;
 function sequenceAnimation() {
+  cancelAnimationFrame(animRaf);
   const svg = wrap.querySelector('svg');
   if (!svg || !animateChk.checked || !svg.getScreenCTM()) return;
   const sp = SPEEDS[animSpeed.value] || SPEEDS.normal, vb = svg.viewBox.baseVal, W = Math.max(vb.width, vb.height), root = svg.getScreenCTM().a;
-  const dots = [...svg.querySelectorAll('circle')].sort((a, b) => (Math.round(a.cy.baseVal.value * 20) - Math.round(b.cy.baseVal.value * 20)) || (a.cx.baseVal.value - b.cx.baseVal.value));
-  const rowOf = c => Math.round(c.cy.baseVal.value * 20), nRows = new Set(dots.map(rowOf)).size;
-  const step = Math.min(sp.dot, sp.dotCap / Math.max(dots.length + 3 * nRows, 1));   // a short pause after each row of dots
-  let row = -1, lastRow = null;
-  dots.forEach((c, i) => {
-    if (rowOf(c) !== lastRow) { row++; lastRow = rowOf(c); }
-    c.classList.add('kdot'); c.style.animation = `pop 0.3s linear ${((i + 3 * row) * step).toFixed(3)}s forwards`;
-  });
+  // dots: row by row, left to right, with a short pause after each row. A dot simply appears: no movement, no resizing.
+  const rowOf = c => Math.round(c.cy.baseVal.value * 20);
+  const dots = [...svg.querySelectorAll('circle')].sort((a, b) => (rowOf(a) - rowOf(b)) || (a.cx.baseVal.value - b.cx.baseVal.value));
+  const nRows = new Set(dots.map(rowOf)).size, step = Math.min(sp.dot, sp.dotCap / Math.max(dots.length + 3 * nRows, 1));
+  let row = -1, last = null;
+  const dotAt = dots.map((c, i) => { if (rowOf(c) !== last) { row++; last = rowOf(c); } return (i + 3 * row) * step; });
+  // lines: one after another, in the order they were built
   const els = [...svg.querySelectorAll('path')];
   const dur = els.map(p => p.dataset.halo ? 0 : Math.max(sp.min, p.getTotalLength() * p.getScreenCTM().a / root / (W * sp.rate)));
   const total = dur.reduce((a, d) => a + (d ? d + sp.gap : 0), 0), f = Math.min(1, sp.cap / Math.max(total, 0.001));
   let t = (dots.length + 3 * nRows) * step + 0.6;
-  els.forEach((p, i) => {
-    if (p.dataset.halo) { p.classList.add('khalo'); p.style.animation = `show 0.01s linear ${t.toFixed(3)}s forwards`; return; }   // padi halos appear just before their lines
-    const d = Math.max(0.05, dur[i] * f);
-    p.style.animation = `draw ${d.toFixed(3)}s linear ${t.toFixed(3)}s forwards`;
+  const ev = els.map((p, i) => {
+    if (p.dataset.halo) return { p, halo: true, start: t };   // padi halos and petal fills appear just before their lines
+    const d = Math.max(0.05, dur[i] * f), e = { p, start: t, dur: d };
     t += d + sp.gap * f;
+    return e;
   });
+  dots.forEach(c => { c.style.opacity = 0; });
+  ev.forEach(e => { if (e.halo) e.p.style.opacity = 0; });
+  let di = 0, ei = 0;
+  const t0 = performance.now();
+  const frame = now => {
+    const s = (now - t0) / 1000;
+    while (di < dots.length && s >= dotAt[di]) dots[di++].style.opacity = 1;
+    while (ei < ev.length) {                       // only the current stroke is ever in progress
+      const e = ev[ei];
+      if (s < e.start) break;
+      if (e.halo) { e.p.style.opacity = 1; ei++; continue; }
+      const k = (s - e.start) / e.dur;
+      if (k >= 1) { e.p.setAttribute('stroke-dashoffset', 0); ei++; continue; }
+      e.p.setAttribute('stroke-dashoffset', (1 - k).toFixed(4));
+      break;
+    }
+    if (di < dots.length || ei < ev.length) animRaf = requestAnimationFrame(frame);
+  };
+  animRaf = requestAnimationFrame(frame);
 }
 
 function render() {

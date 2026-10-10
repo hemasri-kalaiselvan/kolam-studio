@@ -229,17 +229,16 @@ const animateChk = document.getElementById('animate');
 
 function animAttrs() {
   if (!animateChk.checked) return '';
-  return 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="opacity:0"';   // lines start hidden; sequenceAnimation draws them one at a time
+  if (mode === 'sikku') return 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation: draw 2.6s ease forwards;"';   // Sikku keeps its original draw-on
+  return 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="opacity:0"';   // other modes start hidden; sequenceAnimation draws them one at a time
 }
 
 /* ---------- Sikku Kolam ---------- */
 // Dots sit on a square grid. A "layout" decides which grid points exist
-// (square, diamond, ascending, descending, cross). The kolam is drawn as one
-// continuous line (or as few as possible) that runs diagonally between the dots
-// and loops round the dots at the edge. Each edge between two neighbouring dots
-// gets one shared random on/off bit: where it is on, the line passes straight
-// through to the neighbour; where it is off, the line turns round its own dot.
-// Bits are mirrored left-right (and top-bottom when the layout allows).
+// (square, diamond, ascending, descending, cross). Every existing dot gets a
+// closed loop; each edge between two existing neighbours gets one shared
+// random on/off bit. Where it is on, both loops grow a tip that meets at the
+// edge. Bits are mirrored left-right (and top-bottom when the layout allows).
 const DENSITY = 0.66;
 let bits = null, bitsKey = null;
 
@@ -289,53 +288,13 @@ function generateBits(L, density) {
   return { EW, NS };
 }
 
-// Every dot has 4 nodes N,E,S,W (midpoints of its edges, half a cell away) and 4 segments s_k joining node k to node k+1.
-// A node is "connected" when the edge to the neighbouring dot is on. sikkuCurves follows the line from segment to segment:
-// at a connected node it goes straight on into the neighbour, otherwise it turns on round the same dot. It returns the closed curves.
-function sikkuConn(L, EW, NS) {
-  const { C, R } = L;
-  return (i, j, k) => k === 0 ? (j > 0 ? NS[i][j - 1] : 0) : k === 1 ? (i < C - 1 ? EW[i][j] : 0) : k === 2 ? (j < R - 1 ? NS[i][j] : 0) : (i > 0 ? EW[i - 1][j] : 0);
-}
-function sikkuCurves(L, EW, NS) {
-  const { C, R, mask } = L, conn = sikkuConn(L, EW, NS);
-  const U = [[0, -1], [1, 0], [0, 1], [-1, 0]];
-  const next = (i, j, k, fwd) => {
-    if (fwd) {
-      const e = (k + 1) % 4;
-      return conn(i, j, e) ? [i + U[e][0], j + U[e][1], (k + 2) % 4, false] : [i, j, e, true];
-    }
-    return conn(i, j, k) ? [i + U[k][0], j + U[k][1], (k + 2) % 4, true] : [i, j, (k + 3) % 4, false];
-  };
-  const seen = new Set(), curves = [];
-  for (let j = R - 1; j >= 0; j--) for (let i = 0; i < C; i++) {   // start from the bottom row, as in the tutorial
-    if (!mask[i][j]) continue;
-    for (let k = 0; k < 4; k++) {
-      if (seen.has(i + ',' + j + ',' + k)) continue;
-      const cur = [];
-      let st = [i, j, k, true];
-      do { cur.push(st); seen.add(st[0] + ',' + st[1] + ',' + st[2]); st = next(...st); } while (!(st[0] === i && st[1] === j && st[2] === k && st[3] === true));
-      curves.push(cur);
-    }
-  }
-  return curves;
-}
-// try random symmetric bit sets and keep one that gives a single continuous line (or the fewest lines)
-function bestBits(L) {
-  let best = null, bestN = Infinity;
-  for (let t = 0; t < 400 && bestN > 1; t++) {
-    const b = generateBits(L, 0.6 + Math.random() * 0.4), n = sikkuCurves(L, b.EW, b.NS).length;
-    if (n < bestN) { best = b; bestN = n; }
-  }
-  return best;
-}
-
 function renderSikku() {
   const kind = layoutSelect.value;
   const L = makeLayout(kind, parseInt(sizeInput.value, 10));
   if (String(L.n) !== sizeInput.value) sizeInput.value = L.n;
   sizeVal.textContent = L.n;
   const key = kind + ':' + L.n;
-  if (!bits || bitsKey !== key) { bits = bestBits(L); bitsKey = key; }
+  if (!bits || bitsKey !== key) { bits = generateBits(L, DENSITY); bitsKey = key; }
   const { EW, NS } = bits;
   const { C, R, mask } = L;
 
@@ -348,30 +307,47 @@ function renderSikku() {
   const w = (maxI - minI + 1) * cs + pad * 2, h = (maxJ - minJ + 1) * cs + pad * 2;
   const ox = pad - minI * cs, oy = pad - minJ * cs;
   wrap.style.setProperty('--floor', THEME_EARTH.floor);
+  const r0 = cs * 0.25, tipR = cs * 0.5, K = 0.42;
   const U = [[0, -1], [1, 0], [0, 1], [-1, 0]];   // N E S W outward
   const V = [[1, 0], [0, 1], [-1, 0], [0, -1]];   // clockwise tangents
   const norm = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
-  const conn = sikkuConn(L, EW, NS), half = cs / 2, hd = cs * 0.3, f = p => p[0].toFixed(2) + ',' + p[1].toFixed(2);
 
-  // one SVG path per curve; each segment is a cubic Bezier from node k to node k+1 of a dot.
-  // Tangents: along the diagonal at a connected node (so the line runs straight through), round the dot at a node that turns.
-  const curveD = cur => {
-    let d = '';
-    cur.forEach(([i, j, k, fwd], idx) => {
-      const cx = ox + i * cs + cs / 2, cy = oy + j * cs + cs / 2, k2 = (k + 1) % 4;
-      const X = [cx + U[k][0] * half, cy + U[k][1] * half], Y = [cx + U[k2][0] * half, cy + U[k2][1] * half];
-      const D = norm(Y[0] - X[0], Y[1] - X[1]);
-      const t0 = conn(i, j, k) ? D : V[k], t1 = conn(i, j, k2) ? D : V[k2];
-      const c1 = [X[0] + t0[0] * hd, X[1] + t0[1] * hd], c2 = [Y[0] - t1[0] * hd, Y[1] - t1[1] * hd];
-      if (fwd) { if (!idx) d += `M ${f(X)} `; d += `C ${f(c1)} ${f(c2)} ${f(Y)} `; }
-      else     { if (!idx) d += `M ${f(Y)} `; d += `C ${f(c2)} ${f(c1)} ${f(X)} `; }
-    });
-    return d + 'Z';
-  };
-  const paths = sikkuCurves(L, EW, NS).map(cur => `<path class="kolam-line" d="${curveD(cur)}" stroke="${THEME_EARTH.line}" stroke-width="${SW}" ${animAttrs()}/>`);
-  const dots = [];
-  for (let i = 0; i < C; i++) for (let j = 0; j < R; j++) if (mask[i][j])
-    dots.push(`<circle cx="${ox + i * cs + cs / 2}" cy="${oy + j * cs + cs / 2}" r="${DOT_R}" fill="${THEME_EARTH.dot}"/>`);
+  const paths = [], dots = [];
+  for (let i = 0; i < C; i++) {
+    for (let j = 0; j < R; j++) {
+      if (!mask[i][j]) continue;
+      const conn = [
+        j > 0 ? NS[i][j - 1] : 0,
+        i < C - 1 ? EW[i][j] : 0,
+        j < R - 1 ? NS[i][j] : 0,
+        i > 0 ? EW[i - 1][j] : 0
+      ];
+      const cx = ox + i * cs + cs / 2, cy = oy + j * cs + cs / 2;
+      dots.push(`<circle cx="${cx}" cy="${cy}" r="${DOT_R}" fill="${THEME_EARTH.dot}"/>`);
+      const P = U.map((u, k) => {
+        const rad = conn[k] ? tipR : r0;
+        return [cx + u[0] * rad, cy + u[1] * rad];
+      });
+      const tin = [], tout = [];
+      for (let k = 0; k < 4; k++) {
+        if (conn[k]) {
+          const prev = P[(k + 3) % 4], next = P[(k + 1) % 4];
+          tin.push(norm(P[k][0] - prev[0], P[k][1] - prev[1]));
+          tout.push(norm(next[0] - P[k][0], next[1] - P[k][1]));
+        } else { tin.push(V[k]); tout.push(V[k]); }
+      }
+      let d = `M ${P[0][0]},${P[0][1]} `;
+      for (let k = 0; k < 4; k++) {
+        const a = P[k], b = P[(k + 1) % 4];
+        const Ln = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const bt = tin[(k + 1) % 4];
+        d += `C ${a[0] + tout[k][0] * K * Ln},${a[1] + tout[k][1] * K * Ln} ` +
+             `${b[0] - bt[0] * K * Ln},${b[1] - bt[1] * K * Ln} ${b[0]},${b[1]} `;
+      }
+      d += 'Z';
+      paths.push(`<path class="kolam-line" d="${d}" stroke="${THEME_EARTH.line}" stroke-width="${SW}" ${animAttrs()}/>`);
+    }
+  }
   wrap.innerHTML = `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}${paths.join('')}${dots.join('')}</svg>`;
 }
 
@@ -754,6 +730,7 @@ const SPEEDS = {   // dot = seconds per dot, rate = board widths per second, min
 let animRaf = 0;
 function sequenceAnimation() {
   cancelAnimationFrame(animRaf);
+  if (mode === 'sikku') return;   // Sikku keeps its original draw-on animation
   const svg = wrap.querySelector('svg');
   if (!svg || !animateChk.checked || !svg.getScreenCTM()) return;
   const sp = SPEEDS[animSpeed.value] || SPEEDS.normal, vb = svg.viewBox.baseVal, W = Math.max(vb.width, vb.height), root = svg.getScreenCTM().a;

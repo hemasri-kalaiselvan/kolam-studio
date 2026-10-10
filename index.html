@@ -221,14 +221,16 @@ const THEME_BLUE = { floor: '#1747a8', line: '#f4f8ff', dot: '#f4f8ff' };     //
 const THEME_SHAPE = { floor: '#0c0c12', line: '#f5f5f5', dot: '#ffb703' };    // Shape
 const CONTROLS_FOR = { sikku: 'grid', padi: 'padi', shape: 'shape', hridaya: 'hridaya' };
 const DOT_R = Math.max(2, SW * 0.4);
-const KEYFRAMES = '';   // animation is driven from script (see sequenceAnimation), not CSS
+const KEYFRAMES = '<style>@keyframes draw { to { stroke-dashoffset: 0; } }</style>';
 
 let mode = 'sikku';
 const wrap = document.getElementById('canvasWrap');
 const animateChk = document.getElementById('animate');
 
-function animAttrs() {   // lines start hidden (dash offset 1); sequenceAnimation draws them one at a time
-  return animateChk.checked ? 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"' : '';
+function animAttrs() {
+  if (!animateChk.checked) return '';
+  if (mode === 'sikku') return 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="animation: draw 2.6s ease forwards;"';   // Sikku keeps its original draw-on
+  return 'pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" style="opacity:0"';   // other modes start hidden; sequenceAnimation draws them one at a time
 }
 
 /* ---------- Sikku Kolam ---------- */
@@ -310,47 +312,42 @@ function renderSikku() {
   const V = [[1, 0], [0, 1], [-1, 0], [0, -1]];   // clockwise tangents
   const norm = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
 
-  // drawing order: row by row, like laying out the dots; the pen goes along a row, drops to the next one and comes back (snake)
-  const cells = [];
-  for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) if (mask[i][j]) cells.push({ i, j });
-  const order = [...new Set(cells.map(c => c.j))].flatMap((j, ri) => { const row = cells.filter(c => c.j === j); return ri % 2 ? row.reverse() : row; });
   const paths = [], dots = [];
-  order.forEach((cell, idx) => {
-    const { i, j } = cell;
-    const conn = [
-      j > 0 ? NS[i][j - 1] : 0,
-      i < C - 1 ? EW[i][j] : 0,
-      j < R - 1 ? NS[i][j] : 0,
-      i > 0 ? EW[i - 1][j] : 0
-    ];
-    const cx = ox + i * cs + cs / 2, cy = oy + j * cs + cs / 2;
-    dots.push(`<circle cx="${cx}" cy="${cy}" r="${DOT_R}" fill="${THEME_EARTH.dot}"/>`);
-    const P = U.map((u, k) => {
-      const rad = conn[k] ? tipR : r0;
-      return [cx + u[0] * rad, cy + u[1] * rad];
-    });
-    const tin = [], tout = [];
-    for (let k = 0; k < 4; k++) {
-      if (conn[k]) {
-        const prev = P[(k + 3) % 4], next = P[(k + 1) % 4];
-        tin.push(norm(P[k][0] - prev[0], P[k][1] - prev[1]));
-        tout.push(norm(next[0] - P[k][0], next[1] - P[k][1]));
-      } else { tin.push(V[k]); tout.push(V[k]); }
+  for (let i = 0; i < C; i++) {
+    for (let j = 0; j < R; j++) {
+      if (!mask[i][j]) continue;
+      const conn = [
+        j > 0 ? NS[i][j - 1] : 0,
+        i < C - 1 ? EW[i][j] : 0,
+        j < R - 1 ? NS[i][j] : 0,
+        i > 0 ? EW[i - 1][j] : 0
+      ];
+      const cx = ox + i * cs + cs / 2, cy = oy + j * cs + cs / 2;
+      dots.push(`<circle cx="${cx}" cy="${cy}" r="${DOT_R}" fill="${THEME_EARTH.dot}"/>`);
+      const P = U.map((u, k) => {
+        const rad = conn[k] ? tipR : r0;
+        return [cx + u[0] * rad, cy + u[1] * rad];
+      });
+      const tin = [], tout = [];
+      for (let k = 0; k < 4; k++) {
+        if (conn[k]) {
+          const prev = P[(k + 3) % 4], next = P[(k + 1) % 4];
+          tin.push(norm(P[k][0] - prev[0], P[k][1] - prev[1]));
+          tout.push(norm(next[0] - P[k][0], next[1] - P[k][1]));
+        } else { tin.push(V[k]); tout.push(V[k]); }
+      }
+      let d = `M ${P[0][0]},${P[0][1]} `;
+      for (let k = 0; k < 4; k++) {
+        const a = P[k], b = P[(k + 1) % 4];
+        const Ln = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const bt = tin[(k + 1) % 4];
+        d += `C ${a[0] + tout[k][0] * K * Ln},${a[1] + tout[k][1] * K * Ln} ` +
+             `${b[0] - bt[0] * K * Ln},${b[1] - bt[1] * K * Ln} ${b[0]},${b[1]} `;
+      }
+      d += 'Z';
+      paths.push(`<path class="kolam-line" d="${d}" stroke="${THEME_EARTH.line}" stroke-width="${SW}" ${animAttrs()}/>`);
     }
-    // start each loop on the side facing the loop drawn just before it, so the pen only moves a short way
-    let s0 = 0;
-    if (idx) { const p = order[idx - 1], dx = p.i - i, dy = p.j - j; s0 = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0); }
-    let d = `M ${P[s0][0]},${P[s0][1]} `;
-    for (let q = 0; q < 4; q++) {
-      const k = (s0 + q) % 4, a = P[k], b = P[(k + 1) % 4];
-      const Ln = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const bt = tin[(k + 1) % 4];
-      d += `C ${a[0] + tout[k][0] * K * Ln},${a[1] + tout[k][1] * K * Ln} ` +
-           `${b[0] - bt[0] * K * Ln},${b[1] - bt[1] * K * Ln} ${b[0]},${b[1]} `;
-    }
-    d += 'Z';
-    paths.push(`<path class="kolam-line" d="${d}" stroke="${THEME_EARTH.line}" stroke-width="${SW}" ${animAttrs()}/>`);
-  });
+  }
   wrap.innerHTML = `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${KEYFRAMES}${paths.join('')}${dots.join('')}</svg>`;
 }
 
@@ -733,6 +730,7 @@ const SPEEDS = {   // dot = seconds per dot, rate = board widths per second, min
 let animRaf = 0;
 function sequenceAnimation() {
   cancelAnimationFrame(animRaf);
+  if (mode === 'sikku') return;   // Sikku keeps its original draw-on animation
   const svg = wrap.querySelector('svg');
   if (!svg || !animateChk.checked || !svg.getScreenCTM()) return;
   const sp = SPEEDS[animSpeed.value] || SPEEDS.normal, vb = svg.viewBox.baseVal, W = Math.max(vb.width, vb.height), root = svg.getScreenCTM().a;
@@ -754,7 +752,7 @@ function sequenceAnimation() {
     return e;
   });
   dots.forEach(c => { c.style.opacity = 0; });
-  ev.forEach(e => { if (e.halo) e.p.style.opacity = 0; });
+  ev.forEach(e => { e.p.style.opacity = 0; });   // hidden until its turn: a not-yet-drawn round-capped stroke would otherwise leave a dot at its start
   let di = 0, ei = 0;
   const t0 = performance.now();
   const frame = now => {
@@ -763,7 +761,8 @@ function sequenceAnimation() {
     while (ei < ev.length) {                       // only the current stroke is ever in progress
       const e = ev[ei];
       if (s < e.start) break;
-      if (e.halo) { e.p.style.opacity = 1; ei++; continue; }
+      e.p.style.opacity = 1;
+      if (e.halo) { ei++; continue; }
       const k = (s - e.start) / e.dur;
       if (k >= 1) { e.p.setAttribute('stroke-dashoffset', 0); ei++; continue; }
       e.p.setAttribute('stroke-dashoffset', (1 - k).toFixed(4));

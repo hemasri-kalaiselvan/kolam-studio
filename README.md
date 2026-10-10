@@ -10,7 +10,7 @@
 
 - A small web app that draws kolam patterns on a grid of dots (pulli). Open `index.html` in any browser — no build step, no dependencies.
 - Four modes: **Sikku Kolam** (interlacing loops), **Padi Kolam** (stencil-style bands and lotus motifs), **Shape Kolam** (line and leaf patterns drawn over a visible dot layout), and **Hridaya Kolam** (a radial, single-stroke kolam).
-- A tutorial-style animation in Padi, Shape and Hridaya: the dots appear one at a time, row by row, then every line is drawn in turn, one stroke after another, so viewers can follow how the kolam is drawn. Sikku keeps its original draw-on animation. Choose Slow, Normal or Fast, and press **Replay animation** to run it again.
+- A tutorial-style animation in Padi, Shape and Hridaya: the dots appear one at a time, row by row, then every line is drawn in turn, one stroke after another, so viewers can follow how the kolam is drawn. Sikku keeps its original draw-on animation. Choose Slow, Normal or Fast (Fast is the default), and press **Replay animation** to run it again.
 - Multiple dot layouts and styles per mode, and a one-click download of the finished pattern as an image.
 
 ### Sikku Kolam (default)
